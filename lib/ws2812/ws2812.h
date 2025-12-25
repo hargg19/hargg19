@@ -33,6 +33,19 @@ extern "C" {
 #define WS2812_DMA_IRQn        DMA_Channel1_2_IRQn
 
 // =============================================
+// Konfigurasi Timing WS2812 untuk GD32F350
+// =============================================
+// GD32F350 APB2 Clock: 108 MHz (TIMER16 clock = 108 MHz)
+// WS2812 membutuhkan:
+// - BIT_PERIOD: ~1.25us (full bit time) = 135 ticks @ 108MHz
+// - BIT1_HIGH: ~0.9us (high time untuk '1') = 97 ticks
+// - BIT0_HIGH: ~0.35us (high time untuk '0') = 38 ticks
+
+#define WS2812_BIT_PERIOD      135    // ~1.25us (full period)
+#define WS2812_BIT1_HIGH       97     // ~0.9us high (untuk bit '1')
+#define WS2812_BIT0_HIGH       38     // ~0.35us high (untuk bit '0')
+
+// =============================================
 // Tipe Data
 // =============================================
 
@@ -148,6 +161,21 @@ ws2812_color_t ws2812_color_rgb(uint8_t red, uint8_t green, uint8_t blue);
  * @return Warna dalam format WS2812 (GRB)
  */
 ws2812_color_t ws2812_color_hsv(uint8_t hue, uint8_t saturation, uint8_t value);
+
+/**
+ * @brief Mengurangi kecerahan warna
+ * @param color Warna yang akan dikurangi kecerahannya
+ * @param brightness Tingkat kecerahan (0-255)
+ * @return Warna dengan kecerahan yang dikurangi
+ */
+ws2812_color_t ws2812_color_dim(ws2812_color_t color, uint8_t brightness);
+
+/**
+ * @brief Generator warna dari color wheel (0-255)
+ * @param wheel_pos Posisi di wheel (0-255)
+ * @return Warna yang sesuai posisi wheel
+ */
+ws2812_color_t ws2812_color_wheel(uint8_t wheel_pos);
 
 // =============================================
 // Fungsi Efek Animasi
