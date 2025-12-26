@@ -4,14 +4,14 @@
  * This implementation matches the definitions in lib/ws2812/ws2812.h:
  * - WS2812_TIMER  -> TIMER16
  * - WS2812_GPIO   -> GPIOB / PB9
- * - WS2812_DMA_CHANNEL -> DMA_CH1 (and IRQ: DMA_Channel1_2_IRQHandler)
+ * - WS2812_DMA_CHANNEL -> DMA_CH3 (and IRQ: DMA_Channel3_4_IRQHandler)
  *
  * Requirements (in ws2812.h or project config):
  * - WS2812_BIT_PERIOD  : timer period (ARR) for ~1.25us base (in timer ticks)
  * - WS2812_BIT1_HIGH   : CCR value for a '1' bit (high time)
  * - WS2812_BIT0_HIGH   : CCR value for a '0' bit (high time)
  *
- * Make sure the vector table calls DMA_Channel1_2_IRQHandler (declared in ws2812.h).
+ * Make sure the vector table calls DMA_Channel3_4_IRQHandler (declared in ws2812.h).
  */
 
 #include "ws2812.h"
@@ -61,10 +61,8 @@ static void update_internal_from_state(void);
 static void set_pixel_state(uint16_t index, ws2812_color_t color);
 static void set_all_state(ws2812_color_t color);
 
-
-
-/* IRQ wrapper declared in header: DMA_Channel1_2_IRQHandler */
-void DMA_Channel1_2_IRQHandler(void)
+/* IRQ wrapper declared in header: DMA_Channel3_4_IRQHandler */
+void DMA_Channel3_4_IRQHandler(void)
 {
     ws2812_dma_complete_handler();
 }
@@ -102,17 +100,17 @@ static void ws2812_setup_timer_dma(void)
     /* Timer init */
     timer_deinit(WS2812_TIMER);
     timer_parameter_struct timer_initpara;
-    
+
     timer_initpara.prescaler = 0;
     timer_initpara.alignedmode = TIMER_COUNTER_EDGE;
     timer_initpara.counterdirection = TIMER_COUNTER_UP;
-    timer_initpara.period = 53;
+    timer_initpara.period = 134;  // <-- Perbaikan: WS2812_BIT_PERIOD - 1
     timer_initpara.clockdivision = TIMER_CKDIV_DIV1;
     timer_init(WS2812_TIMER, &timer_initpara);
 
     /* Channel 0 configuration (CH0) */
     timer_oc_parameter_struct timer_ocpara;
-    
+
     timer_ocpara.outputstate = TIMER_CCX_ENABLE;
     timer_ocpara.ocpolarity = TIMER_OC_POLARITY_HIGH;
     timer_ocpara.ocidlestate = TIMER_OC_POLARITY_LOW;
