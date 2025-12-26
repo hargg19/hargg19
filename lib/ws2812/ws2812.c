@@ -23,7 +23,7 @@
 
 /* Fallback AF for PB9 if not defined elsewhere */
 #ifndef WS2812_GPIO_AF
-#define WS2812_GPIO_AF GPIO_AF_1
+#define WS2812_GPIO_AF GPIO_AF_2
 #endif
 
 /* Reset pulses (timer periods) for >50..60us reset low */
@@ -106,7 +106,7 @@ static void ws2812_setup_timer_dma(void)
     timer_initpara.prescaler = 0;
     timer_initpara.alignedmode = TIMER_COUNTER_EDGE;
     timer_initpara.counterdirection = TIMER_COUNTER_UP;
-    timer_initpara.period = WS2812_BIT_PERIOD - 1;
+    timer_initpara.period = 53;
     timer_initpara.clockdivision = TIMER_CKDIV_DIV1;
     timer_init(WS2812_TIMER, &timer_initpara);
 
@@ -115,11 +115,12 @@ static void ws2812_setup_timer_dma(void)
     
     timer_ocpara.outputstate = TIMER_CCX_ENABLE;
     timer_ocpara.ocpolarity = TIMER_OC_POLARITY_HIGH;
+    timer_ocpara.ocidlestate = TIMER_OC_POLARITY_LOW;
     timer_channel_output_config(WS2812_TIMER, TIMER_CH_0, &timer_ocpara);
 
-    timer_channel_output_mode_config(WS2812_TIMER, TIMER_CH_0, TIMER_OC_MODE_PWM0);
+    timer_channel_output_mode_config(WS2812_TIMER, TIMER_CH_0, TIMER_OC_MODE_PWM1);
     timer_channel_output_pulse_value_config(WS2812_TIMER, TIMER_CH_0, 0);
-
+    timer_primary_output_config(WS2812_TIMER, ENABLE);
     /* enable CCR shadow so DMA writes take effect on update */
     timer_channel_output_shadow_config(WS2812_TIMER, TIMER_CH_0, TIMER_OC_SHADOW_ENABLE);
 

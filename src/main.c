@@ -5,23 +5,19 @@
 #include "adc_sensor.h"
 #include "pwm_timer0.h"
 #include "i2c_lcd.h"
-#include "buzzer.h"
-#include "ws2812.h"
-#include <math.h>
+#include "math.h"
+#include "stdlib.h"
 
 // Variabel global
 static fuzzy_pid_t g_t12_pid;
 static float g_setpoint = 280.0f;
 static float g_t12_power = 0.0f;
-static uint8_t g_led_count = 8; // Jumlah LED WS2812
 
 // Prototipe task
 void control_task(void);
 void display_task(void);
 void led_blink_task(void);
-void lcd_update_task(void);
-void ws2812_task(void);
-void buzzer_test_task(void);
+void lcd_update_task(void);  // Task untuk update LCD
 
 int main(void) {
     SystemInit();
@@ -40,38 +36,12 @@ int main(void) {
     // Inisialisasi semua modul
     delay_init();
     
-    // Test LCD
+    // Inisialisasi LCD - SIMPLE INIT
     lcd_init();
     lcd_clear();
-    lcd_print_string_at("WS2812 Test", 0, 0);
-    lcd_print_string_at("PB9 TIMER1 DMA", 0, 1);
-    delay_ms(2000);
-    
-    // Inisialisasi WS2812
-    ws2812_init(g_led_count);
-    ws2812_set_brightness(50); // 50% brightness untuk testing
-    
-    // Test sederhana: Set semua LED merah
-    ws2812_set_all(ws2812_color_rgb(255, 0, 0));
-    ws2812_update();
+    lcd_print_string_at("Solder Station", 0, 0);
+    lcd_print_string_at("Initializing...", 0, 1);
     delay_ms(1000);
-    
-    // Test: Set semua LED hijau
-    ws2812_set_all(ws2812_color_rgb(0, 255, 0));
-    ws2812_update();
-    delay_ms(1000);
-    
-    // Test: Set semua LED biru
-    ws2812_set_all(ws2812_color_rgb(0, 0, 255));
-    ws2812_update();
-    delay_ms(1000);
-    
-    // Matikan LED
-    ws2812_clear_all();
-    ws2812_update();
-    
-    // Inisialisasi Buzzer
-    buzzer_init();
     
     // Inisialisasi lainnya
     ht1621_init();
@@ -90,13 +60,13 @@ int main(void) {
     // Jalankan task
     task_start_priority(control_task, 5, TASK_PRIORITY_HIGH);      // 100 Hz
     task_start_priority(display_task, 100, TASK_PRIORITY_NORMAL);  // 10 Hz
-    task_start_priority(lcd_update_task, 250, TASK_PRIORITY_LOW);  // 4 Hz
-    task_start_priority(ws2812_task, 25, TASK_PRIORITY_LOW);  // 40 Hz untuk WS2812
-    task_start_priority(buzzer_test_task, 10, TASK_PRIORITY_LOW);  // 100 Hz untuk buzzer
+    task_start_priority(lcd_update_task, 200, TASK_PRIORITY_NORMAL); // 5 Hz untuk LCD
     task_start_priority(led_blink_task, 500, TASK_PRIORITY_LOW);   // 2 Hz
 
-    // Clear LCD untuk operasi normal
+    // Clear LCD dan tampilkan mode operasi
     lcd_clear();
+    lcd_print_string_at("T12: ---/---C", 0, 0);
+    lcd_print_string_at("Power: --%", 0, 1);
 
     while (1) {
         task_scheduler_run();
@@ -104,119 +74,26 @@ int main(void) {
     }
 }
 
-// Task WS2812 Test
-// Task untuk kontrol WS2812
-void ws2812_task(void) {
-    static uint32_t effect_timer = 0;
-    static uint8_t effect_index = 0;
-    
-    effect_timer++;
-    
-    // Ganti efek setiap 10 detik
-    if (effect_timer % 400 == 0) {  // 10 detik (400 * 25ms)
-        effect_index = (effect_index + 1) % 6;
-        
-        switch (effect_index) {
-            case 0:
-                ws2812_effect_rainbow(5);
-                break;
-            case 1:
-                ws2812_effect_breathing(ws2812_color_rgb(255, 0, 0), 20); // Red breathing
-                break;
-            case 2:
-                ws2812_effect_meteor_center_dual(ws2812_color_rgb(0, 255, 0), 30); // Green meteor
-                break;
-            case 3:
-                ws2812_effect_ping_pong_wave(ws2812_color_rgb(0, 0, 255), 25); // Blue wave
-                break;
-            case 4:
-                ws2812_effect_solid_color(ws2812_color_rgb(255, 255, 255)); // White
-                break;
-            case 5:
-                ws2812_effect_off();
-                break;
-        }
-    }
-    
-    // Update efek yang berjalan (kecuali solid/off)
-    switch (ws2812_get_current_effect()) {
-        case WS2812_EFFECT_RAINBOW:
-            ws2812_effect_rainbow(5);
-            break;
-        case WS2812_EFFECT_BREATHING:
-        case WS2812_EFFECT_METEOR_CENTER_DUAL:
-        case WS2812_EFFECT_WAVE_PING_PONG:
-            // Efek ini update sendiri di fungsi mereka
-            break;
-        default:
-            break;
-    }
-}
-
-
-// Task Buzzer Test
-void buzzer_test_task(void) {
-    static uint32_t buzzer_timer = 0;
-    static uint8_t buzzer_phase = 0;
-    
-    buzzer_timer++;
-    
-    // Ganti buzzer test setiap 5 detik
-    if (buzzer_timer % 500 == 0) {  // 5 detik (500 * 10ms)
-        buzzer_phase = (buzzer_phase + 1) % 5;
-        
-        switch (buzzer_phase) {
-            case 0:
-                buzzer_beep(BEEP_SHORT);  // 1x beep
-                break;
-            case 1:
-                buzzer_beep(BEEP_DOUBLE); // 2x beep
-                break;
-            case 2:
-                buzzer_beep(BEEP_TRIPLE); // 3x beep
-                break;
-            case 3:
-                buzzer_beep(BEEP_ERROR);  // 5x beep
-                break;
-            case 4:
-                buzzer_beep(BEEP_CONTINUOUS); // Continuous
-                // Akan dimatikan oleh timer berikutnya
-                break;
-        }
-    }
-    
-    // Matikan continuous beep setelah 1 detik
-    if (buzzer_timer % 600 == 0 && buzzer_phase == 4) {
-        buzzer_stop();
-    }
-    
-    // Update buzzer state
-    buzzer_task();
-}
-
-// Control task
 void control_task(void) {
     static float t12_temp_filtered = 0.0f;
     static float last_power = 0.0f;
     
     if (adc_sensor_get_data(&g_adc_data)) {
-        // Filter
+        // Filter suhu
         float alpha = 0.3f;
         t12_temp_filtered = (1.0f - alpha) * t12_temp_filtered + alpha * g_adc_data.t12_temp_c;
         
-        // PID Update
+        // Update PID
         g_t12_pid.feedback = t12_temp_filtered;
         float power = fuzzy_pid_update(&g_t12_pid);
         
-        // Deadband
-        float error = (g_setpoint > t12_temp_filtered) ? 
-                     (g_setpoint - t12_temp_filtered) : 
-                     (t12_temp_filtered - g_setpoint);
+        // Deadband control
+        float error = fabsf(g_setpoint - t12_temp_filtered);
         if (error < 2.0f && t12_temp_filtered > g_setpoint) {
             power = 0.0f;
         }
         
-        // Smoothing
+        // Smoothing power
         float smoothed_power = 0.7f * last_power + 0.3f * power;
         
         // Set PWM
@@ -228,67 +105,211 @@ void control_task(void) {
     }
 }
 
-// LCD Update Task
 void lcd_update_task(void) {
-    char line[17];
-    int temp_act, temp_set, power;
+    static uint32_t tick_counter = 0;
+    static uint8_t display_mode = 0;
+    static uint8_t anim_pos = 0;
+    char buffer[17];
+    uint8_t i;
+    
+    tick_counter++;
+    
+    // Ganti display mode setiap 3 detik (3000ms / 250ms = 12 ticks)
+    if (tick_counter % 12 == 0) {
+        display_mode = (display_mode + 1) % 3;
+    }
     
     // Convert floats to integers
-    temp_act = (int)(g_adc_data.t12_temp_c + 0.5f);
-    temp_set = (int)(g_setpoint + 0.5f);
-    power = (int)(g_t12_power + 0.5f);
+    int temp_act = (int)(g_adc_data.t12_temp_c + 0.5f);
+    int temp_set = (int)(g_setpoint + 0.5f);
+    int power = (int)(g_t12_power + 0.5f);
+    int temp_ha = (int)(g_adc_data.hot_air_temp_c + 0.5f);
     
-    // Line 1: Temperature
-    line[0] = 'T'; line[1] = '1'; line[2] = '2'; line[3] = ':';
-    
-    if (temp_act >= 100) {
-        line[4] = '0' + (temp_act / 100);
-        line[5] = '0' + ((temp_act / 10) % 10);
-    } else if (temp_act >= 10) {
-        line[4] = ' ';
-        line[5] = '0' + (temp_act / 10);
-    } else {
-        line[4] = ' ';
-        line[5] = ' ';
+    switch (display_mode) {
+        case 0: // Mode 1: T12 Power Bargraph (full width) + Info
+            // Baris atas: T12 Temp - "T12:245/280°C"
+            buffer[0] = 'T'; buffer[1] = '1'; buffer[2] = '2'; buffer[3] = ':';
+            
+            // Temperature actual (3 digits)
+            if (temp_act >= 100) {
+                buffer[4] = '0' + (temp_act / 100);
+                buffer[5] = '0' + ((temp_act / 10) % 10);
+            } else if (temp_act >= 10) {
+                buffer[4] = ' ';
+                buffer[5] = '0' + (temp_act / 10);
+            } else {
+                buffer[4] = ' ';
+                buffer[5] = ' ';
+            }
+            buffer[6] = '0' + (temp_act % 10);
+            
+            buffer[7] = '/';
+            
+            // Setpoint (3 digits)
+            if (temp_set >= 100) {
+                buffer[8] = '0' + (temp_set / 100);
+                buffer[9] = '0' + ((temp_set / 10) % 10);
+            } else if (temp_set >= 10) {
+                buffer[8] = ' ';
+                buffer[9] = '0' + (temp_set / 10);
+            } else {
+                buffer[8] = ' ';
+                buffer[9] = ' ';
+            }
+            buffer[10] = '0' + (temp_set % 10);
+            
+            buffer[11] = 0xDF;  // ° symbol
+            buffer[12] = 'C';
+            buffer[13] = '\0';
+            
+            lcd_print_string_at(buffer, 0, 0);
+            
+            // Baris bawah: Power Bargraph 16 karakter penuh
+            lcd_draw_bargraph((float)power, 1, 0, 16);
+            break;
+            
+        case 1: // Mode 2: Detailed Power Info
+            // Baris atas: "PWR: 65% SP:280"
+            buffer[0] = 'P'; buffer[1] = 'W'; buffer[2] = 'R'; buffer[3] = ':';
+            buffer[4] = ' ';
+            
+            // Power percentage (3 digits)
+            if (power >= 100) {
+                buffer[5] = '1';
+                buffer[6] = '0';
+                buffer[7] = '0';
+            } else if (power >= 10) {
+                buffer[5] = ' ';
+                buffer[6] = '0' + (power / 10);
+                buffer[7] = '0' + (power % 10);
+            } else {
+                buffer[5] = ' ';
+                buffer[6] = ' ';
+                buffer[7] = '0' + power;
+            }
+            
+            buffer[8] = '%';
+            buffer[9] = ' ';
+            buffer[10] = 'S'; buffer[11] = 'P'; buffer[12] = ':';
+            
+            // Setpoint (3 digits)
+            if (temp_set >= 100) {
+                buffer[13] = '0' + (temp_set / 100);
+                buffer[14] = '0' + ((temp_set / 10) % 10);
+                buffer[15] = '0' + (temp_set % 10);
+            } else if (temp_set >= 10) {
+                buffer[13] = ' ';
+                buffer[14] = '0' + (temp_set / 10);
+                buffer[15] = '0' + (temp_set % 10);
+            } else {
+                buffer[13] = ' ';
+                buffer[14] = ' ';
+                buffer[15] = '0' + temp_set;
+            }
+            
+            buffer[16] = '\0';
+            lcd_print_string_at(buffer, 0, 0);
+            
+            // Baris bawah: Animated running bargraph
+            {
+                // Bersihkan baris
+                lcd_set_cursor(0, 1);
+                for (i = 0; i < 16; i++) {
+                    lcd_print_char(' ');
+                }
+                
+                // Gambar bargraph statis
+                uint8_t graph_width = (uint8_t)((power * 16) / 100);
+                lcd_set_cursor(0, 1);
+                for (i = 0; i < graph_width; i++) {
+                    lcd_print_char(0xFF); // Block karakter
+                }
+                
+                // Gambar running indicator jika ada power
+                if (graph_width > 0) {
+                    lcd_set_cursor(anim_pos % graph_width, 1);
+                    lcd_print_char(0x7E); // Karakter panah →
+                }
+                
+                anim_pos = (anim_pos + 1) % 16;
+            }
+            break;
+            
+        case 2: // Mode 3: Hot Air Info + System Status
+            // Baris atas: Hot Air Temperature - "HA : 300°C"
+            buffer[0] = 'H'; buffer[1] = 'A'; buffer[2] = ' '; buffer[3] = ':';
+            buffer[4] = ' ';
+            
+            // Hot air temperature (3 digits)
+            if (temp_ha >= 100) {
+                buffer[5] = '0' + (temp_ha / 100);
+                buffer[6] = '0' + ((temp_ha / 10) % 10);
+                buffer[7] = '0' + (temp_ha % 10);
+            } else if (temp_ha >= 10) {
+                buffer[5] = ' ';
+                buffer[6] = '0' + (temp_ha / 10);
+                buffer[7] = '0' + (temp_ha % 10);
+            } else {
+                buffer[5] = ' ';
+                buffer[6] = ' ';
+                buffer[7] = '0' + temp_ha;
+            }
+            
+            buffer[8] = 0xDF;  // ° symbol
+            buffer[9] = 'C';
+            buffer[10] = '\0';
+            
+            lcd_print_string_at(buffer, 0, 0);
+            
+            // Baris bawah: Status dan PWM
+            {
+                int error = abs(temp_set - temp_act);
+                const char* status;
+                
+                if (error < 5) {
+                    status = "READY";
+                } else if (power > 70) {
+                    status = "HEATING";
+                } else {
+                    status = "STABLE";
+                }
+                
+                // Format: "READY PWM:65%"
+                // Copy status (max 7 chars)
+                for (i = 0; i < 7 && status[i] != '\0'; i++) {
+                    buffer[i] = status[i];
+                }
+                // Fill remaining with spaces
+                for (; i < 7; i++) {
+                    buffer[i] = ' ';
+                }
+                
+                buffer[7] = ' ';
+                buffer[8] = 'P'; buffer[9] = 'W'; buffer[10] = 'M'; buffer[11] = ':';
+                
+                // Power (2 digits)
+                if (power >= 100) {
+                    buffer[12] = '1';
+                    buffer[13] = '0';
+                } else if (power >= 10) {
+                    buffer[12] = '0' + (power / 10);
+                    buffer[13] = '0' + (power % 10);
+                } else {
+                    buffer[12] = ' ';
+                    buffer[13] = '0' + power;
+                }
+                
+                buffer[14] = '%';
+                buffer[15] = '\0';
+                
+                lcd_print_string_at(buffer, 0, 1);
+            }
+            break;
     }
-    line[6] = '0' + (temp_act % 10);
-    
-    line[7] = '/';
-    
-    if (temp_set >= 100) {
-        line[8] = '0' + (temp_set / 100);
-        line[9] = '0' + ((temp_set / 10) % 10);
-    } else if (temp_set >= 10) {
-        line[8] = ' ';
-        line[9] = '0' + (temp_set / 10);
-    } else {
-        line[8] = ' ';
-        line[9] = ' ';
-    }
-    line[10] = '0' + (temp_set % 10);
-    
-    line[11] = 0xDF;  // ° symbol
-    line[12] = 'C';
-    line[13] = '\0';
-    
-    lcd_print_string_at(line, 0, 0);
-    
-    // Line 2: WS2812 Status
-    line[0] = 'W'; line[1] = 'S'; line[2] = '2'; line[3] = '8';
-    line[4] = '1'; line[5] = '2'; line[6] = ':';
-    
-    // Show power as bargraph (simple)
-    uint8_t bar = (power * 9) / 100;
-    for (uint8_t i = 0; i < 9; i++) {
-        line[7 + i] = (i < bar) ? '=' : ' ';
-    }
-    
-    line[16] = '\0';
-    lcd_print_string_at(line, 0, 1);
 }
 
-// 7-Segment Display Task
 void display_task(void) {
+    // Update 7-segment display
     uint16_t t12_int = (uint16_t)(g_adc_data.t12_temp_c + 0.5f);
     uint16_t hotair_int = (uint16_t)(g_adc_data.hot_air_temp_c + 0.5f);
 
@@ -306,7 +327,6 @@ void display_task(void) {
     display_update_all();
 }
 
-// LED Blink Task
 void led_blink_task(void) {
     static uint8_t state = false;
     gpio_bit_write(GPIOC, GPIO_PIN_13, state ? RESET : SET);
