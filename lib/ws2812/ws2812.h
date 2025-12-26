@@ -28,7 +28,7 @@ extern "C" {
 // TIMER16 menggunakan DMA Channel 3 untuk Update event
 #define WS2812_DMA             DMA1
 #define WS2812_DMA_CHANNEL     DMA_CH3     // <-- Perbaikan
-#define WS2812_DMA_RCC         RCU_DMA1
+#define WS2812_DMA_RCC         RCU_DMA
 #define WS2812_DMA_IRQn        DMA_Channel3_4_IRQn  // <-- Perbaikan
 
 // =============================================
