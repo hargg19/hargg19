@@ -21,16 +21,15 @@ extern "C" {
 #define WS2812_GPIO_RCC        RCU_GPIOB
 
 // Timer untuk DMA trigger (menggunakan BOP GPIO)
-// PB9 bisa menggunakan TIMER16_CH0 atau TIMER1_CH2
 #define WS2812_TIMER           TIMER16
 #define WS2812_TIMER_RCC       RCU_TIMER16
 
 // DMA channel untuk transfer data
-// TIMER16 menggunakan DMA Channel 1 untuk Update event
-#define WS2812_DMA             DMA
-#define WS2812_DMA_CHANNEL     DMA_CH1
-#define WS2812_DMA_RCC         RCU_DMA
-#define WS2812_DMA_IRQn        DMA_Channel1_2_IRQn
+// TIMER16 menggunakan DMA Channel 3 untuk Update event
+#define WS2812_DMA             DMA1
+#define WS2812_DMA_CHANNEL     DMA_CH3     // <-- Perbaikan
+#define WS2812_DMA_RCC         RCU_DMA1
+#define WS2812_DMA_IRQn        DMA_Channel3_4_IRQn  // <-- Perbaikan
 
 // =============================================
 // Konfigurasi Timing WS2812 untuk GD32F350
@@ -230,11 +229,11 @@ ws2812_effect_t ws2812_get_current_effect(void);
 // =============================================
 
 /**
- * @brief Handler interupsi DMA Channel 1-2
+ * @brief Handler interupsi DMA Channel 3-4
  * @note Panggil dari vector table atau startup file
- * @note Untuk GD32F350, TIMER16 menggunakan DMA Channel 2
+ * @note Untuk GD32F350, TIMER16 menggunakan DMA Channel 3
  */
-void DMA_Channel1_2_IRQHandler(void);
+void DMA_Channel3_4_IRQHandler(void);
 
 #ifdef __cplusplus
 }
