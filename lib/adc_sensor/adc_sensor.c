@@ -1,7 +1,7 @@
 #include "adc_sensor.h"
 #include "gd32f3x0.h"
 #include "delay.h"
-#include <math.h>
+#include <arm_math.h>
 
 // Buffer DMA harus berukuran 3 jika semua masuk Regular Group
 // [0]=T12 (PA0), [1]=Hot Air (PA1), [2]=NTC (PA2)
