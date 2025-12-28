@@ -25,11 +25,11 @@ extern "C" {
 #define WS2812_TIMER_RCC       RCU_TIMER16
 
 // DMA channel untuk transfer data
-// TIMER16 menggunakan DMA Channel 3 untuk Update event
-#define WS2812_DMA             DMA1
-#define WS2812_DMA_CHANNEL     DMA_CH3     // <-- Perbaikan
+// TIMER16 menggunakan DMA Channel 0 untuk Update event
+#define WS2812_DMA             DMA
+#define WS2812_DMA_CHANNEL     DMA_CH1     // <-- Perbaikan
 #define WS2812_DMA_RCC         RCU_DMA
-#define WS2812_DMA_IRQn        DMA_Channel3_4_IRQn  // <-- Perbaikan
+#define WS2812_DMA_IRQn        DMA_Channel1_2_IRQn  // <-- Perbaikan
 
 // =============================================
 // Konfigurasi Timing WS2812 untuk GD32F350
@@ -41,8 +41,8 @@ extern "C" {
 // - BIT0_HIGH: ~0.35us (high time untuk '0') = 38 ticks
 
 #define WS2812_BIT_PERIOD      135    // ~1.25us (full period)
-#define WS2812_BIT1_HIGH       97     // ~0.9us high (untuk bit '1')
-#define WS2812_BIT0_HIGH       38     // ~0.35us high (untuk bit '0')
+#define WS2812_BIT1_HIGH       90     // ~0.9us high (untuk bit '1')
+#define WS2812_BIT0_HIGH       40     // ~0.35us high (untuk bit '0')
 
 // =============================================
 // Tipe Data

@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 // Konstanta
-#define ADC_BUFFER_SIZE         2
+#define ADC_BUFFER_SIZE         3
 #define ADC_VREF                3.3f
 #define ADC_MAX_VALUE           4095.0f
 

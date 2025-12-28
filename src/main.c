@@ -5,13 +5,14 @@
 #include "adc_sensor.h"
 #include "pwm_timer0.h"
 #include "i2c_lcd.h"
-#include "math.h"
 #include "stdlib.h"
+#include "arm_math.h"
 
 // Variabel global
 static fuzzy_pid_t g_t12_pid;
 static float g_setpoint = 280.0f;
 static float g_t12_power = 0.0f;
+
 
 // Prototipe task
 void control_task(void);
@@ -49,13 +50,11 @@ int main(void) {
     pwm_timer0_init();
     adc_sensor_init();
     adc_sensor_start();
-    
+
     // Inisialisasi Fuzzy-PID
     fuzzy_pid_init(&g_t12_pid, MODE_SOLDER_T12);
     fuzzy_pid_set_setpoint(&g_t12_pid, g_setpoint);
 
-    // Enable FPU
-    SCB->CPACR |= ((3UL << 10*2) | (3UL << 11*2));
 
     // Jalankan task
     task_start_priority(control_task, 5, TASK_PRIORITY_HIGH);      // 100 Hz

@@ -28,7 +28,7 @@
 
 /* Reset pulses (timer periods) for >50..60us reset low */
 #ifndef WS2812_RESET_PULSES
-#define WS2812_RESET_PULSES 60
+#define WS2812_RESET_PULSES 300
 #endif
 
 /* Internal state */
@@ -84,99 +84,106 @@ static void ws2812_dma_complete_handler(void)
     }
 }
 
-/* Setup TIMER16 (CH0 on PB9) and DMA channel */
 static void ws2812_setup_timer_dma(void)
 {
-    /* Enable clocks */
     rcu_periph_clock_enable(WS2812_GPIO_RCC);
     rcu_periph_clock_enable(WS2812_TIMER_RCC);
     rcu_periph_clock_enable(WS2812_DMA_RCC);
+    
+    /* Penting: Pastikan RCU_CFG0 atau clock sistem sudah benar untuk TIMER16 */
+    syscfg_deinit();
+    syscfg_dma_remap_enable(SYSCFG_DMA_REMAP_TIMER16);
 
-    /* Configure PB9 as AF for TIMER16_CH0 */
     gpio_mode_set(WS2812_GPIO, GPIO_MODE_AF, GPIO_PUPD_NONE, WS2812_PIN);
     gpio_output_options_set(WS2812_GPIO, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, WS2812_PIN);
     gpio_af_set(WS2812_GPIO, WS2812_GPIO_AF, WS2812_PIN);
 
-    /* Timer init */
-    timer_deinit(WS2812_TIMER);
-    timer_parameter_struct timer_initpara;
 
-    timer_initpara.prescaler = 0;
-    timer_initpara.alignedmode = TIMER_COUNTER_EDGE;
-    timer_initpara.counterdirection = TIMER_COUNTER_UP;
-    timer_initpara.period = 134;  // <-- Perbaikan: WS2812_BIT_PERIOD - 1
-    timer_initpara.clockdivision = TIMER_CKDIV_DIV1;
-    timer_init(WS2812_TIMER, &timer_initpara);
-
-    /* Channel 0 configuration (CH0) */
-    timer_oc_parameter_struct timer_ocpara;
-
-    timer_ocpara.outputstate = TIMER_CCX_ENABLE;
-    timer_ocpara.ocpolarity = TIMER_OC_POLARITY_HIGH;
-    timer_ocpara.ocidlestate = TIMER_OC_POLARITY_LOW;
-    timer_channel_output_config(WS2812_TIMER, TIMER_CH_0, &timer_ocpara);
-
-    timer_channel_output_mode_config(WS2812_TIMER, TIMER_CH_0, TIMER_OC_MODE_PWM1);
-    timer_channel_output_pulse_value_config(WS2812_TIMER, TIMER_CH_0, 0);
-    timer_primary_output_config(WS2812_TIMER, ENABLE);
-    /* enable CCR shadow so DMA writes take effect on update */
-    timer_channel_output_shadow_config(WS2812_TIMER, TIMER_CH_0, TIMER_OC_SHADOW_ENABLE);
-
-    /* Configure DMA channel (memory -> peripheral CCR for CH0) */
+    /* DMA Config */
     dma_deinit(WS2812_DMA_CHANNEL);
     dma_parameter_struct dma_initpara;
     dma_struct_para_init(&dma_initpara);
 
-    dma_initpara.direction = DMA_MEMORY_TO_PERIPHERAL;
-    dma_initpara.memory_addr = (uint32_t)dma_buffer;
-    dma_initpara.memory_inc = DMA_MEMORY_INCREASE_ENABLE;
+    dma_initpara.direction    = DMA_MEMORY_TO_PERIPHERAL;
+    dma_initpara.memory_addr  = (uint32_t)dma_buffer;
+    dma_initpara.memory_inc   = DMA_MEMORY_INCREASE_ENABLE;
     dma_initpara.memory_width = DMA_MEMORY_WIDTH_16BIT;
-    dma_initpara.periph_addr = (uint32_t)&TIMER_CH0CV(WS2812_TIMER); /* CCR0 address */
-    dma_initpara.periph_inc = DMA_PERIPH_INCREASE_DISABLE;
+    dma_initpara.periph_addr  = (uint32_t)&TIMER_CH0CV(WS2812_TIMER); 
+    dma_initpara.periph_inc   = DMA_PERIPH_INCREASE_DISABLE;
     dma_initpara.periph_width = DMA_PERIPHERAL_WIDTH_16BIT;
-    dma_initpara.priority = DMA_PRIORITY_HIGH;
+    dma_initpara.priority     = DMA_PRIORITY_ULTRA_HIGH; // Naikkan prioritas
     dma_init(WS2812_DMA_CHANNEL, &dma_initpara);
 
-    /* enable transfer complete interrupt */
     dma_interrupt_enable(WS2812_DMA_CHANNEL, DMA_INT_FTF);
+    nvic_irq_enable(WS2812_DMA_IRQn, 0U, 0U);
 
-    /* Enable timer DMA request on CH0 compare (so each period triggers DMA to write CCR) */
-    timer_dma_enable(WS2812_TIMER, TIMER_DMA_CH0D);
+    timer_deinit(WS2812_TIMER);
+    timer_parameter_struct timer_initpara;
+    timer_struct_para_init(&timer_initpara); // Inisialisasi struct dengan nilai default
 
-    /* Enable NVIC for DMA IRQ as defined in header */
-#ifdef WS2812_DMA_IRQn
-    nvic_irq_enable(WS2812_DMA_IRQn, 1U, 0U);
-#endif
+    timer_initpara.prescaler         = 0; 
+    timer_initpara.period            = 123; // 108MHz / 135 = 800kHz
+    timer_initpara.alignedmode       = TIMER_COUNTER_EDGE;
+    timer_initpara.counterdirection  = TIMER_COUNTER_UP;
+    timer_initpara.clockdivision     = TIMER_CKDIV_DIV1;
+    timer_init(WS2812_TIMER, &timer_initpara);
+
+    timer_oc_parameter_struct timer_ocpara;
+    
+    timer_ocpara.outputstate  = TIMER_CCX_ENABLE;
+    timer_ocpara.outputnstate = TIMER_CCXN_ENABLE;
+    timer_ocpara.ocpolarity   = TIMER_OC_POLARITY_HIGH;
+    timer_ocpara.ocnpolarity  = TIMER_OCN_POLARITY_HIGH;
+    timer_ocpara.ocnidlestate  = TIMER_OCN_IDLE_STATE_LOW;
+    timer_ocpara.ocidlestate  = TIMER_OC_IDLE_STATE_LOW;
+    timer_channel_output_config(WS2812_TIMER, TIMER_CH_0, &timer_ocpara);
+
+    //timer_channel_output_pulse_value_config(WS2812_TIMER, TIMER_CH_0, &dma_buffer);
+    /* PWM Mode 0 atau 1 oke, yang penting konsisten dengan BIT1/BIT0_HIGH */
+    timer_channel_output_mode_config(WS2812_TIMER, TIMER_CH_0, TIMER_OC_MODE_PWM1);
+    timer_channel_output_shadow_config(WS2812_TIMER, TIMER_CH_0, TIMER_OC_SHADOW_ENABLE);
+    
+    timer_primary_output_config(WS2812_TIMER, ENABLE);
+    
+    /* Gunakan Update DMA Request untuk stabilitas timing WS2812 */
+    timer_dma_enable(WS2812_TIMER, TIMER_DMA_UPD); 
+
+    
 }
 
-/* Fill DMA buffer with CCR values representing bits (GRB order) */
 static void ws2812_fill_dma_buffer(void)
 {
     uint32_t idx = 0;
+    const uint16_t h_val = (uint16_t)WS2812_BIT1_HIGH;
+    const uint16_t l_val = (uint16_t)WS2812_BIT0_HIGH;
 
     for (uint16_t led = 0; led < ws2812_state.num_pixels; led++) {
-        ws2812_color_t color = pixel_buffer[led]; /* already GRB struct */
+        ws2812_color_t color = pixel_buffer[led];
+        
+        // Urutan WS2812 adalah G -> R -> B
+        uint8_t data[3] = { color.g, color.r, color.b };
 
-        uint8_t bytes[3] = { color.g, color.r, color.b };
-        for (uint8_t b = 0; b < 3; b++) {
-            uint8_t val = bytes[b];
-            for (int8_t bit = 7; bit >= 0; bit--) {
-                uint8_t v = (val >> bit) & 0x01;
-                dma_buffer[idx++] = v ? (uint16_t)WS2812_BIT1_HIGH : (uint16_t)WS2812_BIT0_HIGH;
-            }
+        for (uint8_t i = 0; i < 3; i++) {
+            uint8_t v = data[i];
+            // Unrolling 8 bit: Langsung cek bitmask satu per satu
+            dma_buffer[idx++] = (v & 0x80) ? h_val : l_val;
+            dma_buffer[idx++] = (v & 0x40) ? h_val : l_val;
+            dma_buffer[idx++] = (v & 0x20) ? h_val : l_val;
+            dma_buffer[idx++] = (v & 0x10) ? h_val : l_val;
+            dma_buffer[idx++] = (v & 0x08) ? h_val : l_val;
+            dma_buffer[idx++] = (v & 0x04) ? h_val : l_val;
+            dma_buffer[idx++] = (v & 0x02) ? h_val : l_val;
+            dma_buffer[idx++] = (v & 0x01) ? h_val : l_val;
         }
     }
 
-    /* Reset pulses: CCR = 0 for WS2812_RESET_PULSES periods to hold line low */
-    for (uint16_t i = 0; i < WS2812_RESET_PULSES; i++) {
-        dma_buffer[idx++] = 0;
-    }
-
-    /* Zero fill remaining (safety) */
+    // 2. Tambahkan Reset Pulse (mengisi buffer dengan 0)
+    // Gunakan <= WS2812_MAX_LEDS * 24 + WS2812_RESET_PULSES untuk proteksi
     uint32_t total = (uint32_t)(ws2812_state.num_pixels * 24 + WS2812_RESET_PULSES);
-    for (; idx < total; idx++) {
-        dma_buffer[idx] = 0;
-    }
+    
+    for (; idx < total; idx++) { // <--- 'total' digunakan di sini
+    dma_buffer[idx] = 0;
+}
 }
 
 /* Update internal pixel_buffer from ws2812_state.pixels applying brightness */
@@ -265,10 +272,10 @@ void ws2812_clear_all(void)
 
 /* Send data using DMA. Blocking only while previous transfer active. */
 void ws2812_update(void)
-{
+{   if (ws2812_state.num_pixels > WS2812_MAX_LEDS) return; // Proteksi tambahan
     /* Wait previous transfer */
     while (dma_busy) {
-        delay_us(10);
+        delay_us(1);
     }
 
     /* Prepare pixel buffer with applied brightness */
