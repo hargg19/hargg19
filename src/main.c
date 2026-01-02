@@ -1,333 +1,174 @@
+/*!
+    \file    main.c
+    \brief   TIMER16 dma demo
+
+    \version 2025-01-01, V2.5.0, firmware for GD32F3x0
+*/
+
+/*
+    Copyright (c) 2025, GigaDevice Semiconductor Inc.
+
+    Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+    1. Redistributions of source code must retain the above copyright notice, this
+       list of conditions and the following disclaimer.
+    2. Redistributions in binary form must reproduce the above copyright notice,
+       this list of conditions and the following disclaimer in the documentation
+       and/or other materials provided with the distribution.
+    3. Neither the name of the copyright holder nor the names of its contributors
+       may be used to endorse or promote products derived from this software without
+       specific prior written permission.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
+OF SUCH DAMAGE.
+*/
+
 #include "gd32f3x0.h"
-#include "delay.h"
-#include "ht1621.h"
-#include "fuzzy_pid.h"
-#include "adc_sensor.h"
-#include "pwm_timer0.h"
-#include "i2c_lcd.h"
-#include "stdlib.h"
-#include "arm_math.h"
-
-// Variabel global
-static fuzzy_pid_t g_t12_pid;
-static float g_setpoint = 280.0f;
-static float g_t12_power = 0.0f;
+#include <stdio.h>
 
 
-// Prototipe task
-void control_task(void);
-void display_task(void);
-void led_blink_task(void);
-void lcd_update_task(void);  // Task untuk update LCD
+#define TIMER0_CH0CC  ((uint32_t)0x40012c34)
+uint16_t buffer[3] = {249, 499, 749};
 
-int main(void) {
-    SystemInit();
+void gpio_config(void);
+void timer_config(void);
+void dma_config(void);
 
-    // Enable debug
-    dbg_periph_enable(DBG_LOW_POWER_DEEPSLEEP);
-    dbg_periph_enable(DBG_LOW_POWER_SLEEP);
-    dbg_periph_enable(DBG_LOW_POWER_STANDBY);
+/*!
+    \brief      configure the GPIO ports
+    \param[in]  none
+    \param[out] none
+    \retval     none
+*/
+void gpio_config(void)
+{
+    rcu_periph_clock_enable(RCU_GPIOB);
 
-    // Inisialisasi GPIO LED (PC13)
-    rcu_periph_clock_enable(RCU_GPIOC);
-    gpio_mode_set(GPIOC, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO_PIN_13);
-    gpio_output_options_set(GPIOC, GPIO_OTYPE_PP, GPIO_OSPEED_2MHZ, GPIO_PIN_13);
-    gpio_bit_write(GPIOC, GPIO_PIN_13, SET);
-
-    // Inisialisasi semua modul
-    delay_init();
-    
-    // Inisialisasi LCD - SIMPLE INIT
-    lcd_init();
-    lcd_clear();
-    lcd_print_string_at("Solder Station", 0, 0);
-    lcd_print_string_at("Initializing...", 0, 1);
-    delay_ms(1000);
-    
-    // Inisialisasi lainnya
-    ht1621_init();
-    display_startup_animation();
-    pwm_timer0_init();
-    adc_sensor_init();
-    adc_sensor_start();
-
-    // Inisialisasi Fuzzy-PID
-    fuzzy_pid_init(&g_t12_pid, MODE_SOLDER_T12);
-    fuzzy_pid_set_setpoint(&g_t12_pid, g_setpoint);
-
-
-    // Jalankan task
-    task_start_priority(control_task, 5, TASK_PRIORITY_HIGH);      // 100 Hz
-    task_start_priority(display_task, 100, TASK_PRIORITY_NORMAL);  // 10 Hz
-    task_start_priority(lcd_update_task, 200, TASK_PRIORITY_NORMAL); // 5 Hz untuk LCD
-    task_start_priority(led_blink_task, 500, TASK_PRIORITY_LOW);   // 2 Hz
-
-    // Clear LCD dan tampilkan mode operasi
-    lcd_clear();
-    lcd_print_string_at("T12: ---/---C", 0, 0);
-    lcd_print_string_at("Power: --%", 0, 1);
-
-    while (1) {
-        task_scheduler_run();
-        __WFI();
-    }
+    /*configure PB8(TIMER16 CH0) as alternate function*/
+    gpio_mode_set(GPIOB, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO_PIN_9);
+    gpio_output_options_set(GPIOB, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, GPIO_PIN_9);
+    gpio_af_set(GPIOB, GPIO_AF_2, GPIO_PIN_9);
 }
 
-void control_task(void) {
-    static float t12_temp_filtered = 0.0f;
-    static float last_power = 0.0f;
-    
-    if (adc_sensor_get_data(&g_adc_data)) {
-        // Filter suhu
-        float alpha = 0.3f;
-        t12_temp_filtered = (1.0f - alpha) * t12_temp_filtered + alpha * g_adc_data.t12_temp_c;
-        
-        // Update PID
-        g_t12_pid.feedback = t12_temp_filtered;
-        float power = fuzzy_pid_update(&g_t12_pid);
-        
-        // Deadband control
-        float error = fabsf(g_setpoint - t12_temp_filtered);
-        if (error < 2.0f && t12_temp_filtered > g_setpoint) {
-            power = 0.0f;
-        }
-        
-        // Smoothing power
-        float smoothed_power = 0.7f * last_power + 0.3f * power;
-        
-        // Set PWM
-        pwm_timer0_set_duty(PWM_CH_T12_HEATER, smoothed_power);
-        last_power = smoothed_power;
-        
-        // Simpan untuk display
-        g_t12_power = smoothed_power;
-    }
+/*!
+    \brief      configure the DMA peripheral
+    \param[in]  none
+    \param[out] none
+    \retval     none
+*/
+void dma_config(void)
+{
+    dma_parameter_struct dma_init_struct;
+
+    /* enable DMA clock */
+    rcu_periph_clock_enable(RCU_DMA);
+    syscfg_dma_remap_enable(SYSCFG_DMA_REMAP_TIMER16);
+    /* initialize DMA channel4 */
+    dma_deinit(DMA_CH1);
+
+    /* DMA channel4 initialize */
+    dma_deinit(DMA_CH1);
+    dma_init_struct.direction    = DMA_MEMORY_TO_PERIPHERAL;
+    dma_init_struct.memory_addr  = (uint32_t)buffer;
+    dma_init_struct.memory_inc   = DMA_MEMORY_INCREASE_ENABLE;
+    dma_init_struct.memory_width = DMA_MEMORY_WIDTH_16BIT;
+    dma_init_struct.number       = 3;
+    dma_init_struct.periph_addr  = (uint32_t)TIMER0_CH0CC;
+    dma_init_struct.periph_inc   = DMA_PERIPH_INCREASE_DISABLE;
+    dma_init_struct.periph_width = DMA_PERIPHERAL_WIDTH_16BIT;
+    dma_init_struct.priority     = DMA_PRIORITY_HIGH;
+    dma_init(DMA_CH1, &dma_init_struct);
+
+    /* configure DMA mode */
+    dma_circulation_enable(DMA_CH1);
+    dma_memory_to_memory_disable(DMA_CH1);
+
+    /* enable DMA channel4 */
+    dma_channel_enable(DMA_CH1);
 }
 
-void lcd_update_task(void) {
-    static uint32_t tick_counter = 0;
-    static uint8_t display_mode = 0;
-    static uint8_t anim_pos = 0;
-    char buffer[17];
-    uint8_t i;
-    
-    tick_counter++;
-    
-    // Ganti display mode setiap 3 detik (3000ms / 250ms = 12 ticks)
-    if (tick_counter % 12 == 0) {
-        display_mode = (display_mode + 1) % 3;
-    }
-    
-    // Convert floats to integers
-    int temp_act = (int)(g_adc_data.t12_temp_c + 0.5f);
-    int temp_set = (int)(g_setpoint + 0.5f);
-    int power = (int)(g_t12_power + 0.5f);
-    int temp_ha = (int)(g_adc_data.hot_air_temp_c + 0.5f);
-    
-    switch (display_mode) {
-        case 0: // Mode 1: T12 Power Bargraph (full width) + Info
-            // Baris atas: T12 Temp - "T12:245/280°C"
-            buffer[0] = 'T'; buffer[1] = '1'; buffer[2] = '2'; buffer[3] = ':';
-            
-            // Temperature actual (3 digits)
-            if (temp_act >= 100) {
-                buffer[4] = '0' + (temp_act / 100);
-                buffer[5] = '0' + ((temp_act / 10) % 10);
-            } else if (temp_act >= 10) {
-                buffer[4] = ' ';
-                buffer[5] = '0' + (temp_act / 10);
-            } else {
-                buffer[4] = ' ';
-                buffer[5] = ' ';
-            }
-            buffer[6] = '0' + (temp_act % 10);
-            
-            buffer[7] = '/';
-            
-            // Setpoint (3 digits)
-            if (temp_set >= 100) {
-                buffer[8] = '0' + (temp_set / 100);
-                buffer[9] = '0' + ((temp_set / 10) % 10);
-            } else if (temp_set >= 10) {
-                buffer[8] = ' ';
-                buffer[9] = '0' + (temp_set / 10);
-            } else {
-                buffer[8] = ' ';
-                buffer[9] = ' ';
-            }
-            buffer[10] = '0' + (temp_set % 10);
-            
-            buffer[11] = 0xDF;  // ° symbol
-            buffer[12] = 'C';
-            buffer[13] = '\0';
-            
-            lcd_print_string_at(buffer, 0, 0);
-            
-            // Baris bawah: Power Bargraph 16 karakter penuh
-            lcd_draw_bargraph((float)power, 1, 0, 16);
-            break;
-            
-        case 1: // Mode 2: Detailed Power Info
-            // Baris atas: "PWR: 65% SP:280"
-            buffer[0] = 'P'; buffer[1] = 'W'; buffer[2] = 'R'; buffer[3] = ':';
-            buffer[4] = ' ';
-            
-            // Power percentage (3 digits)
-            if (power >= 100) {
-                buffer[5] = '1';
-                buffer[6] = '0';
-                buffer[7] = '0';
-            } else if (power >= 10) {
-                buffer[5] = ' ';
-                buffer[6] = '0' + (power / 10);
-                buffer[7] = '0' + (power % 10);
-            } else {
-                buffer[5] = ' ';
-                buffer[6] = ' ';
-                buffer[7] = '0' + power;
-            }
-            
-            buffer[8] = '%';
-            buffer[9] = ' ';
-            buffer[10] = 'S'; buffer[11] = 'P'; buffer[12] = ':';
-            
-            // Setpoint (3 digits)
-            if (temp_set >= 100) {
-                buffer[13] = '0' + (temp_set / 100);
-                buffer[14] = '0' + ((temp_set / 10) % 10);
-                buffer[15] = '0' + (temp_set % 10);
-            } else if (temp_set >= 10) {
-                buffer[13] = ' ';
-                buffer[14] = '0' + (temp_set / 10);
-                buffer[15] = '0' + (temp_set % 10);
-            } else {
-                buffer[13] = ' ';
-                buffer[14] = ' ';
-                buffer[15] = '0' + temp_set;
-            }
-            
-            buffer[16] = '\0';
-            lcd_print_string_at(buffer, 0, 0);
-            
-            // Baris bawah: Animated running bargraph
-            {
-                // Bersihkan baris
-                lcd_set_cursor(0, 1);
-                for (i = 0; i < 16; i++) {
-                    lcd_print_char(' ');
-                }
-                
-                // Gambar bargraph statis
-                uint8_t graph_width = (uint8_t)((power * 16) / 100);
-                lcd_set_cursor(0, 1);
-                for (i = 0; i < graph_width; i++) {
-                    lcd_print_char(0xFF); // Block karakter
-                }
-                
-                // Gambar running indicator jika ada power
-                if (graph_width > 0) {
-                    lcd_set_cursor(anim_pos % graph_width, 1);
-                    lcd_print_char(0x7E); // Karakter panah →
-                }
-                
-                anim_pos = (anim_pos + 1) % 16;
-            }
-            break;
-            
-        case 2: // Mode 3: Hot Air Info + System Status
-            // Baris atas: Hot Air Temperature - "HA : 300°C"
-            buffer[0] = 'H'; buffer[1] = 'A'; buffer[2] = ' '; buffer[3] = ':';
-            buffer[4] = ' ';
-            
-            // Hot air temperature (3 digits)
-            if (temp_ha >= 100) {
-                buffer[5] = '0' + (temp_ha / 100);
-                buffer[6] = '0' + ((temp_ha / 10) % 10);
-                buffer[7] = '0' + (temp_ha % 10);
-            } else if (temp_ha >= 10) {
-                buffer[5] = ' ';
-                buffer[6] = '0' + (temp_ha / 10);
-                buffer[7] = '0' + (temp_ha % 10);
-            } else {
-                buffer[5] = ' ';
-                buffer[6] = ' ';
-                buffer[7] = '0' + temp_ha;
-            }
-            
-            buffer[8] = 0xDF;  // ° symbol
-            buffer[9] = 'C';
-            buffer[10] = '\0';
-            
-            lcd_print_string_at(buffer, 0, 0);
-            
-            // Baris bawah: Status dan PWM
-            {
-                int error = abs(temp_set - temp_act);
-                const char* status;
-                
-                if (error < 5) {
-                    status = "READY";
-                } else if (power > 70) {
-                    status = "HEATING";
-                } else {
-                    status = "STABLE";
-                }
-                
-                // Format: "READY PWM:65%"
-                // Copy status (max 7 chars)
-                for (i = 0; i < 7 && status[i] != '\0'; i++) {
-                    buffer[i] = status[i];
-                }
-                // Fill remaining with spaces
-                for (; i < 7; i++) {
-                    buffer[i] = ' ';
-                }
-                
-                buffer[7] = ' ';
-                buffer[8] = 'P'; buffer[9] = 'W'; buffer[10] = 'M'; buffer[11] = ':';
-                
-                // Power (2 digits)
-                if (power >= 100) {
-                    buffer[12] = '1';
-                    buffer[13] = '0';
-                } else if (power >= 10) {
-                    buffer[12] = '0' + (power / 10);
-                    buffer[13] = '0' + (power % 10);
-                } else {
-                    buffer[12] = ' ';
-                    buffer[13] = '0' + power;
-                }
-                
-                buffer[14] = '%';
-                buffer[15] = '\0';
-                
-                lcd_print_string_at(buffer, 0, 1);
-            }
-            break;
-    }
+/*!
+    \brief      configure the TIMER peripheral
+    \param[in]  none
+    \param[out] none
+    \retval     none
+*/
+void timer_config(void)
+{
+    /* TIMER16 DMA Transfer example -------------------------------------------------
+    TIMER0CLK is fixed to systemcoreclock, the TIMER16 prescaler is equal to 108(GD32F350)
+    so the TIMER16 counter clock used is 1MHz.
+
+    the objective is to configure TIMER16 channel 1 to generate PWM
+    signal with a frequency equal to 1KHz and a variable duty cycle(25%,50%,75%) that is
+    changed by the DMA after a specific number of update DMA request.
+
+    the number of this repetitive requests is defined by the TIMER16 repetition counter,
+    each 2 update requests, the TIMER16 Channel 0 duty cycle changes to the next new
+    value defined by the buffer .
+    -----------------------------------------------------------------------------*/
+    timer_oc_parameter_struct timer_ocintpara;
+    timer_parameter_struct timer_initpara;
+
+    rcu_periph_clock_enable(RCU_TIMER16);
+
+    timer_deinit(TIMER16);
+
+    /* TIMER16 configuration */
+    timer_initpara.prescaler         = 45;
+    timer_initpara.alignedmode       = TIMER_COUNTER_EDGE;
+    timer_initpara.counterdirection  = TIMER_COUNTER_UP;
+    timer_initpara.period            = 135;
+    timer_initpara.clockdivision     = TIMER_CKDIV_DIV1;
+    timer_initpara.repetitioncounter = 1;
+    timer_init(TIMER16, &timer_initpara);
+
+    /* CH0 configuration in PWM0 mode */
+    timer_ocintpara.outputstate  = TIMER_CCX_ENABLE;
+    timer_ocintpara.outputnstate = TIMER_CCXN_ENABLE;
+    timer_ocintpara.ocpolarity   = TIMER_OC_POLARITY_HIGH;
+    timer_ocintpara.ocnpolarity  = TIMER_OCN_POLARITY_HIGH;
+    timer_ocintpara.ocidlestate  = TIMER_OC_IDLE_STATE_HIGH;
+    timer_ocintpara.ocnidlestate = TIMER_OCN_IDLE_STATE_LOW;
+    timer_channel_output_config(TIMER16, TIMER_CH_0, &timer_ocintpara);
+
+    timer_channel_output_pulse_value_config(TIMER16, TIMER_CH_0, buffer[0]);
+    timer_channel_output_mode_config(TIMER16, TIMER_CH_0, TIMER_OC_MODE_PWM0);
+    timer_channel_output_shadow_config(TIMER16, TIMER_CH_0, TIMER_OC_SHADOW_DISABLE);
+
+    /* TIMER16 primary output enable */
+    timer_primary_output_config(TIMER16, ENABLE);
+
+    /* TIMER16 update DMA request enable */
+    timer_dma_enable(TIMER16, TIMER_DMA_UPD);
+
+    /* auto-reload preload enable */
+    timer_auto_reload_shadow_enable(TIMER16);
+
+    /* TIMER16 counter enable */
+    timer_enable(TIMER16);
 }
 
-void display_task(void) {
-    // Update 7-segment display
-    uint16_t t12_int = (uint16_t)(g_adc_data.t12_temp_c + 0.5f);
-    uint16_t hotair_int = (uint16_t)(g_adc_data.hot_air_temp_c + 0.5f);
+/*!
+    \brief      main function
+    \param[in]  none
+    \param[out] none
+    \retval     none
+*/
+int main(void)
+{
+    gpio_config();
+    dma_config();
+    timer_config();
 
-    if (t12_int > 550) t12_int = 550;
-    if (hotair_int > 550) hotair_int = 550;
-
-    display_set_digit(0, t12_int / 100);
-    display_set_digit(1, (t12_int / 10) % 10);
-    display_set_digit(2, t12_int % 10);
-
-    display_set_digit(3, hotair_int / 100);
-    display_set_digit(4, (hotair_int / 10) % 10);
-    display_set_digit(5, hotair_int % 10);
-
-    display_update_all();
-}
-
-void led_blink_task(void) {
-    static uint8_t state = false;
-    gpio_bit_write(GPIOC, GPIO_PIN_13, state ? RESET : SET);
-    state = !state;
+    while(1);
 }
